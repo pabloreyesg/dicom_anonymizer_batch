@@ -257,3 +257,15 @@ git push origin v1.0.0
   evitar *path traversal* (entradas con `../` o rutas absolutas se rechazan).
 * El anonimizador **nunca** modifica UIDs, geometría ni tags temporales —
   ver `PROTECTED_KEYWORDS` en `anonymizerbatch.py` para la lista completa.
+
+---
+
+## 📜 Licencia
+
+Este proyecto se distribuye bajo la **licencia MIT** (ver `LICENSE`).
+
+Usa y/o empaqueta dentro de los binarios compilados (`.exe`/`.AppImage`)
+librerías de terceros bajo sus propias licencias (MIT, BSD-3-Clause,
+Apache-2.0, LGPL-2.1, PSF y GPL-2.0-or-later con excepción de bootloader) —
+el detalle completo, con los avisos de copyright exigidos por cada una, está
+en [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
