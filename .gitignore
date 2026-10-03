@@ -1,0 +1,7 @@
+venv/
+venv-dicomsorter/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
