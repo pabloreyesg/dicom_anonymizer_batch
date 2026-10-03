@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=DICOM Anonymizer
+Comment=Anonimizador DICOM minimo con soporte 4D (fMRI/DWI) y dicomsorter opcional
+Exec=DicomAnonymizer
+Icon=dicomanonymizer
+Categories=Science;MedicalSoftware;Utility;
+Terminal=false

@@ -19,6 +19,7 @@ para evitar que los visores médicos (Weasis, etc.) fragmenten las series.
   de anonimización.
 * **`dicomsorter` opcional:** integración opcional con la herramienta externa
   `dicomsorter` (desactivada por defecto porque puede fragmentar series 4D).
+  En el AppImage de Linux viene embebido — cero instalación adicional.
 
 ---
 
@@ -96,6 +97,78 @@ dicomsorter --version   # → dicomsorter 0.1.0a8
 
 Si no necesitas reordenar archivos, deja el checkbox desactivado (es el valor
 por defecto y evita fragmentar series 4D).
+
+---
+
+## 🐧 Generar un AppImage autocontenido (Linux)
+
+El AppImage empaqueta **dos binarios independientes** generados con PyInstaller
+(cada uno con su propio Python y su propia versión de pydicom embebida, sin
+conflicto): `DicomAnonymizer` (pydicom 3.x) y `dicomsorter` (pydicom 2.4.5).
+El resultado es un único archivo `.AppImage` que no requiere Python, pip ni
+ningún paquete del sistema en la máquina destino — ni siquiera para usar la
+opción "Ejecutar dicomsorter".
+
+### Opción A — Build local
+
+```bash
+# 1) Compilar DicomAnonymizer (entorno con pydicom 3.x)
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt pyinstaller
+venv/bin/pyinstaller --onefile --name DicomAnonymizer \
+  --distpath dist-main --workpath /tmp/build-main --specpath /tmp/build-main \
+  anonymizerbatch.py
+
+# 2) Compilar dicomsorter (entorno aislado con pydicom 2.4.5)
+python3 -m venv venv-dicomsorter
+venv-dicomsorter/bin/pip install -r requirements-dicomsorter.txt pyinstaller
+venv-dicomsorter/bin/pyinstaller --onefile --name dicomsorter \
+  --distpath dist-dicomsorter --workpath /tmp/build-dicomsorter --specpath /tmp/build-dicomsorter \
+  packaging/dicomsorter_entry.py
+
+# 3) Armar el AppDir
+mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+cp dist-main/DicomAnonymizer dist-dicomsorter/dicomsorter AppDir/usr/bin/
+chmod +x AppDir/usr/bin/*
+cp packaging/AppRun AppDir/AppRun && chmod +x AppDir/AppRun
+cp packaging/dicomanonymizer.desktop AppDir/dicomanonymizer.desktop
+cp packaging/dicomanonymizer.desktop AppDir/usr/share/applications/
+
+# icono (requiere ImageMagick: sudo apt install imagemagick)
+convert -size 256x256 xc:"#1e3a5f" -fill white -gravity center \
+  -pointsize 100 -font DejaVu-Sans-Bold -annotate +0-20 "Dx" \
+  -fill "#4fc3f7" -pointsize 24 -annotate +0+60 "ANONYMIZER" \
+  AppDir/dicomanonymizer.png
+cp AppDir/dicomanonymizer.png AppDir/usr/share/icons/hicolor/256x256/apps/
+
+# 4) Empaquetar
+wget -q -O /tmp/appimagetool.AppImage \
+  https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+chmod +x /tmp/appimagetool.AppImage
+ARCH=x86_64 /tmp/appimagetool.AppImage AppDir DicomAnonymizer-x86_64.AppImage
+```
+
+Resultado: `DicomAnonymizer-x86_64.AppImage`. Para distribuirlo, el usuario
+final solo necesita:
+
+```bash
+chmod +x DicomAnonymizer-x86_64.AppImage
+./DicomAnonymizer-x86_64.AppImage
+```
+
+### Opción B — Build automático en GitHub Actions
+
+Este repo incluye `.github/workflows/build-linux-appimage.yml`, que hace todo
+lo anterior en un runner `ubuntu-22.04` cada vez que:
+
+* se hace push de un tag `v*` → adjunta el AppImage a un GitHub Release, o
+* se dispara manualmente (`workflow_dispatch`):
+
+```bash
+gh workflow run build-linux-appimage.yml
+gh run list --workflow=build-linux-appimage.yml --limit 1
+gh run download <run-id> -n DicomAnonymizer-linux-appimage
+```
 
 ---
 

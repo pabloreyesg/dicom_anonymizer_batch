@@ -1,0 +1,77 @@
+name: Build Linux AppImage
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencias de sistema (Tk + ImageMagick para el icono)
+        run: sudo apt-get update && sudo apt-get install -y python3-tk imagemagick fuse libfuse2
+
+      - name: Descargar appimagetool
+        run: |
+          wget -q -O /tmp/appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+
+      - name: Crear venv principal (pydicom 3.x) y compilar DicomAnonymizer
+        run: |
+          python3 -m venv venv
+          venv/bin/pip install --upgrade pip
+          venv/bin/pip install -r requirements.txt pyinstaller
+          venv/bin/pyinstaller --onefile --name DicomAnonymizer \
+            --distpath dist-main --workpath /tmp/build-main --specpath /tmp/build-main \
+            anonymizerbatch.py
+
+      - name: Crear venv aislado (pydicom 2.4.5) y compilar dicomsorter
+        run: |
+          python3 -m venv venv-dicomsorter
+          venv-dicomsorter/bin/pip install --upgrade pip
+          venv-dicomsorter/bin/pip install -r requirements-dicomsorter.txt pyinstaller
+          venv-dicomsorter/bin/pyinstaller --onefile --name dicomsorter \
+            --distpath dist-dicomsorter --workpath /tmp/build-dicomsorter --specpath /tmp/build-dicomsorter \
+            packaging/dicomsorter_entry.py
+
+      - name: Armar AppDir
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp dist-main/DicomAnonymizer AppDir/usr/bin/
+          cp dist-dicomsorter/dicomsorter AppDir/usr/bin/
+          chmod +x AppDir/usr/bin/DicomAnonymizer AppDir/usr/bin/dicomsorter
+
+          cp packaging/AppRun AppDir/AppRun
+          chmod +x AppDir/AppRun
+          cp packaging/dicomanonymizer.desktop AppDir/dicomanonymizer.desktop
+          cp packaging/dicomanonymizer.desktop AppDir/usr/share/applications/dicomanonymizer.desktop
+
+          convert -size 256x256 xc:"#1e3a5f" \
+            -fill white -gravity center -pointsize 100 -font DejaVu-Sans-Bold -annotate +0-20 "Dx" \
+            -fill "#4fc3f7" -pointsize 24 -annotate +0+60 "ANONYMIZER" \
+            AppDir/dicomanonymizer.png
+          cp AppDir/dicomanonymizer.png AppDir/usr/share/icons/hicolor/256x256/apps/dicomanonymizer.png
+
+      - name: Empaquetar AppImage
+        run: ARCH=x86_64 /tmp/appimagetool.AppImage AppDir DicomAnonymizer-x86_64.AppImage
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: DicomAnonymizer-linux-appimage
+          path: DicomAnonymizer-x86_64.AppImage
+
+      - name: Adjuntar a release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: DicomAnonymizer-x86_64.AppImage
