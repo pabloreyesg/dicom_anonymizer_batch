@@ -21,6 +21,8 @@ Para diagnosticar el problema de series partidas en Weasis:
 """
 
 import os
+import sys
+import json
 import queue
 import logging
 import tempfile
@@ -63,6 +65,313 @@ logging.getLogger().addHandler(queue_handler)
 cancel_event = threading.Event()
 
 # ═════════════════════════════════════════════
+#  IDIOMA (es/en)
+# ═════════════════════════════════════════════
+LANG_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".dicom_anonymizer_lang.json")
+
+
+def load_language():
+    try:
+        with open(LANG_CONFIG_PATH, "r", encoding="utf-8") as f:
+            lang = json.load(f).get("language")
+            if lang in ("es", "en"):
+                return lang
+    except Exception:
+        pass
+    return "es"
+
+
+def save_language(lang):
+    try:
+        with open(LANG_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"language": lang}, f)
+    except Exception as e:
+        logging.warning("No se pudo guardar la preferencia de idioma: %s", e)
+
+
+APP_LANGUAGE = load_language()
+
+STRINGS = {
+    "es": {
+        "app_title": "DICOM Anonymizer (mínimo)  v3.0",
+        "menu_language": "Idioma",
+        "lang_name_es": "Español",
+        "lang_name_en": "English",
+        "menu_help": "Ayuda",
+        "menu_about_item": "Acerca de",
+        "menu_help_item": "Ayuda",
+        "about_title": "Acerca de DICOM Anonymizer",
+        "about_body": (
+            "DICOM Anonymizer & Sorter  v3.0\n\n"
+            "Anonimización mínima y segura de imágenes DICOM, con protección\n"
+            "especial para series 4D (fMRI/DWI).\n\n"
+            "Repositorio: github.com/pabloreyesg/dicom_anonymizer_batch"
+        ),
+        "help_title": "Ayuda",
+        "help_body": (
+            "Cómo usar DICOM Anonymizer:\n\n"
+            "1. Pestaña Principal: selecciona una carpeta o archivo comprimido\n"
+            "   de entrada, un directorio de salida y un código de anonimización\n"
+            "   (reemplaza Nombre e ID del paciente). Pulsa Procesar.\n\n"
+            "2. Pestaña Lote: añade varios sujetos (carpetas o comprimidos) para\n"
+            "   procesarlos en serie, cada uno con su propio código.\n\n"
+            "3. Pestaña Campos opcionales: activa campos DICOM adicionales a\n"
+            "   vaciar (fecha de nacimiento, institución, médicos, etc.) si tu\n"
+            "   estudio lo exige. Desactivados por defecto.\n\n"
+            "4. Pestaña Log: consola en tiempo real y botón de diagnóstico.\n\n"
+            "UIDs, geometría y tags temporales nunca se modifican, para no\n"
+            "romper series 4D (fMRI/DWI)."
+        ),
+        "tab_main": "  Principal  ",
+        "tab_batch": "  Lote  ",
+        "tab_extra": "  Campos opcionales  ",
+        "tab_log": "  Log  ",
+        "input_label": "Entrada (carpeta o comprimido):",
+        "btn_browse": "Examinar",
+        "dlg_select_input": "Seleccionar entrada",
+        "dlg_select_archive": "Seleccionar archivo comprimido",
+        "filetype_archives": "Comprimidos",
+        "filetype_all": "Todos",
+        "btn_archive": "Archivo…",
+        "output_label": "Directorio de salida:",
+        "dlg_select_output": "Seleccionar salida",
+        "btn_create": "Crear",
+        "code_label": "Código de anonimización:",
+        "code_hint": (
+            "Este valor reemplaza Nombre e ID del paciente.\n"
+            "Si lo dejas vacío se usa \"Anonymized\". El resto (UIDs, geometría,\n"
+            "tags temporales) se preserva intacto."
+        ),
+        "workers_label": "Procesos paralelos:",
+        "sorter_check": "Ejecutar dicomsorter después de anonimizar  (⚠ puede fragmentar series 4D)",
+        "progress_default": "0 / ? archivos (0%)",
+        "progress_fmt": "{done} / {total} archivos ({pct}%)",
+        "status_waiting": "Esperando acción…",
+        "btn_process": "▶  Procesar",
+        "btn_cancel": "✖  Cancelar",
+        "batch_intro": (
+            "Procesa varios sujetos en serie. Cada uno se anonimiza con su código\n"
+            "y se guarda en:  <salida raíz>/<código>"
+        ),
+        "batch_output_label": "Salida raíz:",
+        "dlg_batch_output": "Salida raíz del lote",
+        "col_folder": "Carpeta de entrada",
+        "col_code": "Código (Nombre/ID)",
+        "col_status": "Estado",
+        "dlg_subject_folder": "Seleccionar carpeta del sujeto",
+        "status_pending": "pendiente",
+        "status_pending_zip": "pendiente (zip)",
+        "dlg_subfolders": "Carpeta padre (cada subcarpeta = 1 sujeto)",
+        "dlg_archives": "Seleccionar archivos comprimidos (Ctrl/Shift para varios)",
+        "dlg_archives_folder": "Carpeta con comprimidos (cada archivo = 1 sujeto)",
+        "btn_add_subject": "+ Sujeto",
+        "btn_add_subfolders": "+ Subcarpetas",
+        "btn_add_archives": "+ Comprimido(s)",
+        "btn_add_archives_folder": "+ Carpeta de zips",
+        "btn_remove": "Quitar",
+        "btn_clear": "Limpiar",
+        "edit_hint": "(doble clic en la columna Código para editarlo)",
+        "batch_sorter_check": "Ejecutar dicomsorter en cada sujeto  (⚠ puede fragmentar series 4D)",
+        "subj_label_default": "Sujeto 0 / 0",
+        "subj_label_fmt": "Sujeto {i} / {total}",
+        "btn_batch_process": "▶  Procesar lote",
+        "msg_no_archives_title": "Sin comprimidos",
+        "msg_no_archives_body": "No se encontraron archivos comprimidos en:\n{parent}",
+        "extra_intro": (
+            "Campos adicionales a vaciar durante la anonimización. Todos están\n"
+            "DESACTIVADOS por defecto — selecciona solo los que exija tu estudio\n"
+            "(p. ej. requisitos de un repositorio financiado por NIH). No afectan\n"
+            "UIDs, geometría ni tags temporales; nunca se tocan esos."
+        ),
+        "btn_check_all": "Marcar todos",
+        "btn_uncheck_all": "Desmarcar todos",
+        "btn_diagnostic": "Diagnóstico",
+        "btn_clear_log": "Limpiar log",
+        "msg_error_title": "Error",
+        "msg_completed_title": "Proceso completado",
+        "msg_batch_completed_title": "Lote completado",
+        "msg_empty_path_title": "Ruta vacía",
+        "msg_empty_path_body": "Escribe primero una ruta en el campo.",
+        "msg_dir_exists_title": "Directorio existente",
+        "msg_dir_exists_body": "El directorio ya existe:\n{path}",
+        "msg_dir_created_title": "Directorio creado",
+        "msg_dir_created_body": "Directorio creado exitosamente:\n{path}",
+        "msg_dir_create_fail": "No se pudo crear el directorio:\n{e}",
+        "msg_invalid_input": (
+            "La entrada debe ser una carpeta DICOM o un archivo comprimido "
+            "(.zip, .tar.gz, .tgz, .tar, .tar.bz2, .tar.xz)."
+        ),
+        "msg_dir_not_exist_title": "Directorio no existe",
+        "msg_output_not_exist_body": "El directorio de salida no existe:\n{output_dir}\n\n¿Crearlo ahora?",
+        "msg_no_subjects_title": "Sin sujetos",
+        "msg_no_subjects_body": "Añade al menos un sujeto a la lista.",
+        "msg_select_output_root": "Selecciona un directorio de salida (raíz) para el lote.",
+        "msg_invalid_subject_input": "Entrada no válida (ni carpeta ni comprimido):\n{input}",
+        "msg_root_not_exist_body": "La carpeta de salida raíz no existe:\n{output_root}\n\n¿Crearla ahora?",
+        "status_cancelled": "Proceso cancelado.",
+        "status_completed_fmt": "Completado  ✔ {ok}  ✗ {errors}  ⊘ {skipped}",
+        "status_error_fmt": "Error: {e}",
+        "batch_cancelled": "Lote cancelado.",
+        "batch_summary_fmt": "Lote finalizado – Sujetos: {total}   ✔ {ok}  ✗ {errors}  ⊘ {skipped}",
+        "batch_processing_fmt": "[{idx}/{total}] {name} …",
+        "tree_processing": "procesando…",
+        "tree_cancelled": "cancelado",
+        "tree_error_fmt": "ERROR: {e}",
+        "status_extracting": "Descomprimiendo…",
+        "status_anonymizing": "Anonimizando imágenes…",
+        "status_running_sorter": "Ejecutando dicomsorter…",
+        "restart_confirm_title": "Reiniciar aplicación",
+        "restart_confirm_body": (
+            "Para cambiar el idioma hay que reiniciar la aplicación.\n"
+            "Se perderán las rutas y la lista de sujetos no guardados.\n\n"
+            "¿Reiniciar ahora?"
+        ),
+    },
+    "en": {
+        "app_title": "DICOM Anonymizer (minimal)  v3.0",
+        "menu_language": "Language",
+        "lang_name_es": "Español",
+        "lang_name_en": "English",
+        "menu_help": "Help",
+        "menu_about_item": "About",
+        "menu_help_item": "Help",
+        "about_title": "About DICOM Anonymizer",
+        "about_body": (
+            "DICOM Anonymizer & Sorter  v3.0\n\n"
+            "Minimal, safe anonymization of DICOM images, with special\n"
+            "protection for 4D series (fMRI/DWI).\n\n"
+            "Repository: github.com/pabloreyesg/dicom_anonymizer_batch"
+        ),
+        "help_title": "Help",
+        "help_body": (
+            "How to use DICOM Anonymizer:\n\n"
+            "1. Main tab: pick an input folder or archive, an output\n"
+            "   directory, and an anonymization code (replaces the patient's\n"
+            "   Name and ID). Click Process.\n\n"
+            "2. Batch tab: add several subjects (folders or archives) to\n"
+            "   process them in series, each with its own code.\n\n"
+            "3. Optional fields tab: enable additional DICOM fields to clear\n"
+            "   (birth date, institution, physicians, etc.) if your study\n"
+            "   requires it. Off by default.\n\n"
+            "4. Log tab: real-time console and a diagnostics button.\n\n"
+            "UIDs, geometry and temporal tags are never modified, to avoid\n"
+            "breaking 4D series (fMRI/DWI)."
+        ),
+        "tab_main": "  Main  ",
+        "tab_batch": "  Batch  ",
+        "tab_extra": "  Optional fields  ",
+        "tab_log": "  Log  ",
+        "input_label": "Input (folder or archive):",
+        "btn_browse": "Browse",
+        "dlg_select_input": "Select input",
+        "dlg_select_archive": "Select archive file",
+        "filetype_archives": "Archives",
+        "filetype_all": "All",
+        "btn_archive": "Archive…",
+        "output_label": "Output directory:",
+        "dlg_select_output": "Select output",
+        "btn_create": "Create",
+        "code_label": "Anonymization code:",
+        "code_hint": (
+            "This value replaces the patient's Name and ID.\n"
+            "If left empty, \"Anonymized\" is used. Everything else (UIDs,\n"
+            "geometry, temporal tags) is preserved intact."
+        ),
+        "workers_label": "Parallel processes:",
+        "sorter_check": "Run dicomsorter after anonymizing  (⚠ may fragment 4D series)",
+        "progress_default": "0 / ? files (0%)",
+        "progress_fmt": "{done} / {total} files ({pct}%)",
+        "status_waiting": "Waiting for action…",
+        "btn_process": "▶  Process",
+        "btn_cancel": "✖  Cancel",
+        "batch_intro": (
+            "Processes several subjects in series. Each is anonymized with\n"
+            "its own code and saved to:  <root output>/<code>"
+        ),
+        "batch_output_label": "Root output:",
+        "dlg_batch_output": "Batch root output",
+        "col_folder": "Input folder",
+        "col_code": "Code (Name/ID)",
+        "col_status": "Status",
+        "dlg_subject_folder": "Select subject folder",
+        "status_pending": "pending",
+        "status_pending_zip": "pending (zip)",
+        "dlg_subfolders": "Parent folder (each subfolder = 1 subject)",
+        "dlg_archives": "Select archive files (Ctrl/Shift for multiple)",
+        "dlg_archives_folder": "Folder with archives (each file = 1 subject)",
+        "btn_add_subject": "+ Subject",
+        "btn_add_subfolders": "+ Subfolders",
+        "btn_add_archives": "+ Archive(s)",
+        "btn_add_archives_folder": "+ Folder of zips",
+        "btn_remove": "Remove",
+        "btn_clear": "Clear",
+        "edit_hint": "(double-click the Code column to edit it)",
+        "batch_sorter_check": "Run dicomsorter on each subject  (⚠ may fragment 4D series)",
+        "subj_label_default": "Subject 0 / 0",
+        "subj_label_fmt": "Subject {i} / {total}",
+        "btn_batch_process": "▶  Process batch",
+        "msg_no_archives_title": "No archives",
+        "msg_no_archives_body": "No archive files were found in:\n{parent}",
+        "extra_intro": (
+            "Additional fields to clear during anonymization. All are\n"
+            "OFF by default — enable only the ones your study requires\n"
+            "(e.g. requirements from a NIH-funded repository). They never\n"
+            "affect UIDs, geometry, or temporal tags; those stay protected."
+        ),
+        "btn_check_all": "Check all",
+        "btn_uncheck_all": "Uncheck all",
+        "btn_diagnostic": "Diagnostics",
+        "btn_clear_log": "Clear log",
+        "msg_error_title": "Error",
+        "msg_completed_title": "Process completed",
+        "msg_batch_completed_title": "Batch completed",
+        "msg_empty_path_title": "Empty path",
+        "msg_empty_path_body": "Type a path in the field first.",
+        "msg_dir_exists_title": "Directory exists",
+        "msg_dir_exists_body": "The directory already exists:\n{path}",
+        "msg_dir_created_title": "Directory created",
+        "msg_dir_created_body": "Directory created successfully:\n{path}",
+        "msg_dir_create_fail": "Could not create the directory:\n{e}",
+        "msg_invalid_input": (
+            "The input must be a DICOM folder or an archive file "
+            "(.zip, .tar.gz, .tgz, .tar, .tar.bz2, .tar.xz)."
+        ),
+        "msg_dir_not_exist_title": "Directory does not exist",
+        "msg_output_not_exist_body": "The output directory does not exist:\n{output_dir}\n\nCreate it now?",
+        "msg_no_subjects_title": "No subjects",
+        "msg_no_subjects_body": "Add at least one subject to the list.",
+        "msg_select_output_root": "Select a root output directory for the batch.",
+        "msg_invalid_subject_input": "Invalid input (neither a folder nor an archive):\n{input}",
+        "msg_root_not_exist_body": "The root output folder does not exist:\n{output_root}\n\nCreate it now?",
+        "status_cancelled": "Process cancelled.",
+        "status_completed_fmt": "Completed  ✔ {ok}  ✗ {errors}  ⊘ {skipped}",
+        "status_error_fmt": "Error: {e}",
+        "batch_cancelled": "Batch cancelled.",
+        "batch_summary_fmt": "Batch finished – Subjects: {total}   ✔ {ok}  ✗ {errors}  ⊘ {skipped}",
+        "batch_processing_fmt": "[{idx}/{total}] {name} …",
+        "tree_processing": "processing…",
+        "tree_cancelled": "cancelled",
+        "tree_error_fmt": "ERROR: {e}",
+        "status_extracting": "Extracting…",
+        "status_anonymizing": "Anonymizing images…",
+        "status_running_sorter": "Running dicomsorter…",
+        "restart_confirm_title": "Restart application",
+        "restart_confirm_body": (
+            "Changing the language requires restarting the application.\n"
+            "Unsaved paths and the subject list will be lost.\n\n"
+            "Restart now?"
+        ),
+    },
+}
+
+
+def tr(key, **kwargs):
+    """Devuelve el string traducido para el idioma activo (APP_LANGUAGE)."""
+    text = STRINGS.get(APP_LANGUAGE, STRINGS["es"]).get(key, key)
+    return text.format(**kwargs) if kwargs else text
+
+
+# ═════════════════════════════════════════════
 #  CONFIGURACIÓN DE ANONIMIZACIÓN
 # ═════════════════════════════════════════════
 
@@ -96,40 +405,124 @@ PROTECTED_KEYWORDS = frozenset({
 # Se vacían (valor "") en vez de usar el código de anonimización, siguiendo
 # la práctica estándar de DICOM para atributos "Replace -> zero-length".
 #
-# Cada entrada: (keyword DICOM, etiqueta visible, categoría para agrupar en la GUI)
+# Cada entrada: (keyword DICOM, slug de categoría — ver CATEGORY_LABELS/FIELD_LABELS)
 OPTIONAL_ANON_FIELDS = [
-    ("PatientBirthDate", "Fecha de nacimiento", "Identificación del paciente"),
-    ("PatientAge", "Edad del paciente", "Identificación del paciente"),
-    ("PatientAddress", "Dirección del paciente", "Identificación del paciente"),
-    ("PatientTelephoneNumbers", "Teléfono del paciente", "Identificación del paciente"),
-    ("OtherPatientIDs", "Otros IDs del paciente", "Identificación del paciente"),
-    ("OtherPatientNames", "Otros nombres del paciente", "Identificación del paciente"),
-    ("PatientBirthName", "Apellido de nacimiento", "Identificación del paciente"),
-    ("PatientMotherBirthName", "Apellido de soltera de la madre", "Identificación del paciente"),
-    ("EthnicGroup", "Grupo étnico", "Identificación del paciente"),
-    ("Occupation", "Ocupación", "Identificación del paciente"),
-    ("AdditionalPatientHistory", "Historia clínica adicional", "Identificación del paciente"),
-    ("PatientComments", "Comentarios del paciente", "Identificación del paciente"),
-    ("InstitutionName", "Nombre de la institución", "Institución y personal médico"),
-    ("InstitutionAddress", "Dirección de la institución", "Institución y personal médico"),
-    ("InstitutionalDepartmentName", "Departamento institucional", "Institución y personal médico"),
-    ("ReferringPhysicianName", "Médico que remite", "Institución y personal médico"),
-    ("ReferringPhysicianAddress", "Dirección del médico que remite", "Institución y personal médico"),
-    ("ReferringPhysicianTelephoneNumbers", "Teléfono del médico que remite", "Institución y personal médico"),
-    ("PerformingPhysicianName", "Médico que realiza el estudio", "Institución y personal médico"),
-    ("OperatorsName", "Nombre del operador/técnico", "Institución y personal médico"),
-    ("PhysiciansOfRecord", "Médicos responsables", "Institución y personal médico"),
-    ("NameOfPhysiciansReadingStudy", "Médico que interpreta el estudio", "Institución y personal médico"),
-    ("RequestingPhysician", "Médico solicitante", "Institución y personal médico"),
-    ("StationName", "Nombre de la estación/equipo", "Equipo y estudio"),
-    ("DeviceSerialNumber", "Número de serie del equipo", "Equipo y estudio"),
-    ("StudyID", "ID del estudio", "Equipo y estudio"),
-    ("AccessionNumber", "Número de accesión", "Equipo y estudio"),
-    ("StudyDate", "Fecha del estudio", "Fechas (identificador HIPAA)"),
-    ("SeriesDate", "Fecha de la serie", "Fechas (identificador HIPAA)"),
-    ("AcquisitionDate", "Fecha de adquisición", "Fechas (identificador HIPAA)"),
-    ("ContentDate", "Fecha de contenido", "Fechas (identificador HIPAA)"),
+    ("PatientBirthDate", "patient"),
+    ("PatientAge", "patient"),
+    ("PatientAddress", "patient"),
+    ("PatientTelephoneNumbers", "patient"),
+    ("OtherPatientIDs", "patient"),
+    ("OtherPatientNames", "patient"),
+    ("PatientBirthName", "patient"),
+    ("PatientMotherBirthName", "patient"),
+    ("EthnicGroup", "patient"),
+    ("Occupation", "patient"),
+    ("AdditionalPatientHistory", "patient"),
+    ("PatientComments", "patient"),
+    ("InstitutionName", "institution"),
+    ("InstitutionAddress", "institution"),
+    ("InstitutionalDepartmentName", "institution"),
+    ("ReferringPhysicianName", "institution"),
+    ("ReferringPhysicianAddress", "institution"),
+    ("ReferringPhysicianTelephoneNumbers", "institution"),
+    ("PerformingPhysicianName", "institution"),
+    ("OperatorsName", "institution"),
+    ("PhysiciansOfRecord", "institution"),
+    ("NameOfPhysiciansReadingStudy", "institution"),
+    ("RequestingPhysician", "institution"),
+    ("StationName", "equipment"),
+    ("DeviceSerialNumber", "equipment"),
+    ("StudyID", "equipment"),
+    ("AccessionNumber", "equipment"),
+    ("StudyDate", "dates"),
+    ("SeriesDate", "dates"),
+    ("AcquisitionDate", "dates"),
+    ("ContentDate", "dates"),
 ]
+
+CATEGORY_LABELS = {
+    "es": {
+        "patient": "Identificación del paciente",
+        "institution": "Institución y personal médico",
+        "equipment": "Equipo y estudio",
+        "dates": "Fechas (identificador HIPAA)",
+    },
+    "en": {
+        "patient": "Patient identification",
+        "institution": "Institution and medical staff",
+        "equipment": "Equipment and study",
+        "dates": "Dates (HIPAA identifier)",
+    },
+}
+
+FIELD_LABELS = {
+    "es": {
+        "PatientBirthDate": "Fecha de nacimiento",
+        "PatientAge": "Edad del paciente",
+        "PatientAddress": "Dirección del paciente",
+        "PatientTelephoneNumbers": "Teléfono del paciente",
+        "OtherPatientIDs": "Otros IDs del paciente",
+        "OtherPatientNames": "Otros nombres del paciente",
+        "PatientBirthName": "Apellido de nacimiento",
+        "PatientMotherBirthName": "Apellido de soltera de la madre",
+        "EthnicGroup": "Grupo étnico",
+        "Occupation": "Ocupación",
+        "AdditionalPatientHistory": "Historia clínica adicional",
+        "PatientComments": "Comentarios del paciente",
+        "InstitutionName": "Nombre de la institución",
+        "InstitutionAddress": "Dirección de la institución",
+        "InstitutionalDepartmentName": "Departamento institucional",
+        "ReferringPhysicianName": "Médico que remite",
+        "ReferringPhysicianAddress": "Dirección del médico que remite",
+        "ReferringPhysicianTelephoneNumbers": "Teléfono del médico que remite",
+        "PerformingPhysicianName": "Médico que realiza el estudio",
+        "OperatorsName": "Nombre del operador/técnico",
+        "PhysiciansOfRecord": "Médicos responsables",
+        "NameOfPhysiciansReadingStudy": "Médico que interpreta el estudio",
+        "RequestingPhysician": "Médico solicitante",
+        "StationName": "Nombre de la estación/equipo",
+        "DeviceSerialNumber": "Número de serie del equipo",
+        "StudyID": "ID del estudio",
+        "AccessionNumber": "Número de accesión",
+        "StudyDate": "Fecha del estudio",
+        "SeriesDate": "Fecha de la serie",
+        "AcquisitionDate": "Fecha de adquisición",
+        "ContentDate": "Fecha de contenido",
+    },
+    "en": {
+        "PatientBirthDate": "Patient birth date",
+        "PatientAge": "Patient age",
+        "PatientAddress": "Patient address",
+        "PatientTelephoneNumbers": "Patient phone number",
+        "OtherPatientIDs": "Other patient IDs",
+        "OtherPatientNames": "Other patient names",
+        "PatientBirthName": "Patient birth name",
+        "PatientMotherBirthName": "Mother's birth name",
+        "EthnicGroup": "Ethnic group",
+        "Occupation": "Occupation",
+        "AdditionalPatientHistory": "Additional patient history",
+        "PatientComments": "Patient comments",
+        "InstitutionName": "Institution name",
+        "InstitutionAddress": "Institution address",
+        "InstitutionalDepartmentName": "Institutional department",
+        "ReferringPhysicianName": "Referring physician",
+        "ReferringPhysicianAddress": "Referring physician address",
+        "ReferringPhysicianTelephoneNumbers": "Referring physician phone",
+        "PerformingPhysicianName": "Performing physician",
+        "OperatorsName": "Operator/technician name",
+        "PhysiciansOfRecord": "Physicians of record",
+        "NameOfPhysiciansReadingStudy": "Reading physician",
+        "RequestingPhysician": "Requesting physician",
+        "StationName": "Station/equipment name",
+        "DeviceSerialNumber": "Device serial number",
+        "StudyID": "Study ID",
+        "AccessionNumber": "Accession number",
+        "StudyDate": "Study date",
+        "SeriesDate": "Series date",
+        "AcquisitionDate": "Acquisition date",
+        "ContentDate": "Content date",
+    },
+}
 
 
 # ═════════════════════════════════════════════
@@ -379,7 +772,7 @@ def anonymize_subject(source, output_dir, max_workers, anon_code, run_sorter,
         # Resolver la entrada: carpeta directa o comprimido -> extraer a temporal.
         if is_archive(source):
             if status_callback:
-                status_callback("Descomprimiendo…")
+                status_callback(tr("status_extracting"))
             logging.info("Descomprimiendo sujeto: %s", source)
             extract_dir = stack.enter_context(
                 tempfile.TemporaryDirectory(prefix="dicom_extract_"))
@@ -390,7 +783,7 @@ def anonymize_subject(source, output_dir, max_workers, anon_code, run_sorter,
 
         logging.info("Sujeto: %s  →  %s   (código='%s')", input_dir, output_dir, anon_code)
         if status_callback:
-            status_callback("Anonimizando imágenes…")
+            status_callback(tr("status_anonymizing"))
 
         if run_sorter:
             # Intermedio: anonimizar y luego dejar que dicomsorter escriba el destino.
@@ -404,7 +797,7 @@ def anonymize_subject(source, output_dir, max_workers, anon_code, run_sorter,
             if cancel_event.is_set():
                 return counters, total
             if status_callback:
-                status_callback("Ejecutando dicomsorter…")
+                status_callback(tr("status_running_sorter"))
             run_dicomsorter(temp_dir, output_dir, total)
         else:
             # Escritura DIRECTA al destino: la mitad de I/O (sin copytree posterior).
@@ -427,7 +820,7 @@ def process_images(input_dir, output_dir, max_workers, anon_code, run_sorter,
         pct = int(done / total * 100) if total else 0
         progress_bar.after(0, lambda: progress_bar.config(value=pct))
         progress_label.after(0, lambda: progress_label.config(
-            text=f"{done} / {total} archivos ({pct}%)"
+            text=tr("progress_fmt", done=done, total=total, pct=pct)
         ))
 
     try:
@@ -438,17 +831,17 @@ def process_images(input_dir, output_dir, max_workers, anon_code, run_sorter,
         )
 
         if cancel_event.is_set():
-            safe_update(status_label, "Proceso cancelado.")
+            safe_update(status_label, tr("status_cancelled"))
             return
 
-        summary = f"Completado  ✔ {counters['ok']}  ✗ {counters['errors']}  ⊘ {counters['skipped']}"
+        summary = tr("status_completed_fmt", ok=counters['ok'], errors=counters['errors'], skipped=counters['skipped'])
         safe_update(status_label, summary)
-        messagebox.showinfo("Proceso completado", summary)
+        messagebox.showinfo(tr("msg_completed_title"), summary)
 
     except Exception as e:
         logging.error("Error en process_images: %s", e)
-        safe_update(status_label, f"Error: {e}")
-        messagebox.showerror("Error", str(e))
+        safe_update(status_label, tr("status_error_fmt", e=e))
+        messagebox.showerror(tr("msg_error_title"), str(e))
 
     finally:
         cancel_button.after(0, lambda: cancel_button.config(state="disabled"))
@@ -478,7 +871,7 @@ def process_batch(subjects, output_root, max_workers, run_sorter,
 
     for idx, subj in enumerate(subjects, start=1):
         if cancel_event.is_set():
-            safe_update(status_label, "Lote cancelado.")
+            safe_update(status_label, tr("batch_cancelled"))
             break
 
         input_dir = subj["input"]
@@ -486,18 +879,19 @@ def process_batch(subjects, output_root, max_workers, run_sorter,
         iid = subj["iid"]
         out_dir = os.path.join(output_root, sanitize_code(code))
 
-        safe_update(status_label, f"[{idx}/{total_subj}] {os.path.basename(input_dir)} …")
+        safe_update(status_label, tr("batch_processing_fmt", idx=idx, total=total_subj,
+                                     name=os.path.basename(input_dir)))
         subj_progress_bar.after(0, lambda i=idx: subj_progress_bar.config(
             value=int((i - 1) / total_subj * 100)))
         subj_progress_label.after(0, lambda i=idx: subj_progress_label.config(
-            text=f"Sujeto {i} / {total_subj}"))
-        set_row(iid, "procesando…")
+            text=tr("subj_label_fmt", i=i, total=total_subj)))
+        set_row(iid, tr("tree_processing"))
 
         def update_file_progress(done, total):
             pct = int(done / total * 100) if total else 0
             file_progress_bar.after(0, lambda: file_progress_bar.config(value=pct))
             file_progress_label.after(0, lambda d=done, t=total, p=pct: file_progress_label.config(
-                text=f"{d} / {t} archivos ({p}%)"))
+                text=tr("progress_fmt", done=d, total=t, pct=p)))
 
         try:
             counters, _ = anonymize_subject(
@@ -508,22 +902,22 @@ def process_batch(subjects, output_root, max_workers, run_sorter,
                 aggregate[k] += counters[k]
 
             if cancel_event.is_set():
-                set_row(iid, "cancelado")
+                set_row(iid, tr("tree_cancelled"))
                 break
             set_row(iid, f"✔ {counters['ok']}  ✗ {counters['errors']}  ⊘ {counters['skipped']}")
             logging.info("Sujeto '%s' completado.", code)
 
         except Exception as e:
             logging.error("Error en sujeto '%s': %s", code, e)
-            set_row(iid, f"ERROR: {e}")
+            set_row(iid, tr("tree_error_fmt", e=e))
             aggregate["errors"] += 1
             # continúa con el siguiente sujeto en vez de abortar todo el lote
 
     subj_progress_bar.after(0, lambda: subj_progress_bar.config(value=100))
-    summary = (f"Lote finalizado – Sujetos: {total_subj}   "
-               f"✔ {aggregate['ok']}  ✗ {aggregate['errors']}  ⊘ {aggregate['skipped']}")
+    summary = tr("batch_summary_fmt", total=total_subj, ok=aggregate['ok'],
+                errors=aggregate['errors'], skipped=aggregate['skipped'])
     safe_update(status_label, summary)
-    messagebox.showinfo("Lote completado", summary)
+    messagebox.showinfo(tr("msg_batch_completed_title"), summary)
     cancel_button.after(0, lambda: cancel_button.config(state="disabled"))
 
 
@@ -535,8 +929,8 @@ def safe_update(widget, text):
     widget.after(0, lambda: widget.config(text=text))
 
 
-def browse_or_create_directory(entry, title="Seleccionar directorio"):
-    directory = filedialog.askdirectory(title=title)
+def browse_or_create_directory(entry, title=None):
+    directory = filedialog.askdirectory(title=title or tr("dlg_select_input"))
     if directory:
         entry.delete(0, tk.END)
         entry.insert(0, directory)
@@ -545,17 +939,17 @@ def browse_or_create_directory(entry, title="Seleccionar directorio"):
 def create_directory_from_entry(entry):
     path = entry.get().strip()
     if not path:
-        messagebox.showwarning("Ruta vacía", "Escribe primero una ruta en el campo.")
+        messagebox.showwarning(tr("msg_empty_path_title"), tr("msg_empty_path_body"))
         return
     if os.path.isdir(path):
-        messagebox.showinfo("Directorio existente", f"El directorio ya existe:\n{path}")
+        messagebox.showinfo(tr("msg_dir_exists_title"), tr("msg_dir_exists_body", path=path))
         return
     try:
         os.makedirs(path, exist_ok=True)
-        messagebox.showinfo("Directorio creado", f"Directorio creado exitosamente:\n{path}")
+        messagebox.showinfo(tr("msg_dir_created_title"), tr("msg_dir_created_body", path=path))
         logging.info("Directorio creado: %s", path)
     except Exception as e:
-        messagebox.showerror("Error", f"No se pudo crear el directorio:\n{e}")
+        messagebox.showerror(tr("msg_error_title"), tr("msg_dir_create_fail", e=e))
 
 
 def poll_log_queue(log_text, root):
@@ -583,19 +977,17 @@ def start_processing(input_entry, output_entry, code_entry, workers_var, sorter_
     anon_code = code_entry.get().strip() or DEFAULT_ANON_CODE
 
     if not (os.path.isdir(input_dir) or is_archive(input_dir)):
-        messagebox.showerror(
-            "Error", "La entrada debe ser una carpeta DICOM o un archivo comprimido "
-                     "(.zip, .tar.gz, .tgz, .tar, .tar.bz2, .tar.xz).")
+        messagebox.showerror(tr("msg_error_title"), tr("msg_invalid_input"))
         return
 
     if not os.path.isdir(output_dir):
-        if messagebox.askyesno("Directorio no existe",
-                               f"El directorio de salida no existe:\n{output_dir}\n\n¿Crearlo ahora?"):
+        if messagebox.askyesno(tr("msg_dir_not_exist_title"),
+                               tr("msg_output_not_exist_body", output_dir=output_dir)):
             try:
                 os.makedirs(output_dir, exist_ok=True)
                 logging.info("Directorio de salida creado: %s", output_dir)
             except Exception as e:
-                messagebox.showerror("Error", f"No se pudo crear el directorio:\n{e}")
+                messagebox.showerror(tr("msg_error_title"), tr("msg_dir_create_fail", e=e))
                 return
         else:
             return
@@ -605,7 +997,7 @@ def start_processing(input_entry, output_entry, code_entry, workers_var, sorter_
     extra_keywords = get_extra_keywords()
 
     progress_bar.config(value=0)
-    progress_label.config(text="0 / ? archivos (0%)")
+    progress_label.config(text=tr("progress_default"))
 
     def worker():
         try:
@@ -627,20 +1019,20 @@ def start_batch(subjects, output_root, workers_var, sorter_var, tree,
                 run_button, cancel_button, get_extra_keywords):
     """Valida y lanza el procesamiento en serie de varios sujetos."""
     if not subjects:
-        messagebox.showwarning("Sin sujetos", "Añade al menos un sujeto a la lista.")
+        messagebox.showwarning(tr("msg_no_subjects_title"), tr("msg_no_subjects_body"))
         return
     if not output_root:
-        messagebox.showerror("Error", "Selecciona un directorio de salida (raíz) para el lote.")
+        messagebox.showerror(tr("msg_error_title"), tr("msg_select_output_root"))
         return
 
     for s in subjects:
         if not (os.path.isdir(s["input"]) or is_archive(s["input"])):
-            messagebox.showerror("Error", f"Entrada no válida (ni carpeta ni comprimido):\n{s['input']}")
+            messagebox.showerror(tr("msg_error_title"), tr("msg_invalid_subject_input", input=s['input']))
             return
 
     if not os.path.isdir(output_root):
-        if messagebox.askyesno("Directorio no existe",
-                               f"La carpeta de salida raíz no existe:\n{output_root}\n\n¿Crearla ahora?"):
+        if messagebox.askyesno(tr("msg_dir_not_exist_title"),
+                               tr("msg_root_not_exist_body", output_root=output_root)):
             os.makedirs(output_root, exist_ok=True)
         else:
             return
@@ -667,71 +1059,116 @@ def start_batch(subjects, output_root, workers_var, sorter_var, tree,
     threading.Thread(target=worker, daemon=True).start()
 
 
+def restart_app():
+    """Relanza el proceso completo (necesario para aplicar el nuevo idioma)."""
+    save_language(APP_LANGUAGE)
+    try:
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        logging.error("No se pudo reiniciar automáticamente: %s", e)
+
+
 def main():
+    global APP_LANGUAGE
+
     root = tk.Tk()
-    root.title("DICOM Anonymizer (mínimo)  v3.0")
+    root.title(tr("app_title"))
     root.resizable(True, True)
+
+    # ── Barra de menú: Idioma + Ayuda ─────────────────────────────────
+    menubar = tk.Menu(root)
+    root.config(menu=menubar)
+
+    lang_var = tk.StringVar(value=APP_LANGUAGE)
+
+    def on_lang_change():
+        global APP_LANGUAGE
+        new_lang = lang_var.get()
+        if new_lang == APP_LANGUAGE:
+            return
+        if messagebox.askyesno(tr("restart_confirm_title"), tr("restart_confirm_body")):
+            APP_LANGUAGE = new_lang
+            root.destroy()
+            restart_app()
+        else:
+            lang_var.set(APP_LANGUAGE)
+
+    lang_menu = tk.Menu(menubar, tearoff=0)
+    lang_menu.add_radiobutton(label=tr("lang_name_es"), value="es", variable=lang_var,
+                              command=on_lang_change)
+    lang_menu.add_radiobutton(label=tr("lang_name_en"), value="en", variable=lang_var,
+                              command=on_lang_change)
+    menubar.add_cascade(label=tr("menu_language"), menu=lang_menu)
+
+    def show_about():
+        messagebox.showinfo(tr("about_title"), tr("about_body"))
+
+    def show_help():
+        messagebox.showinfo(tr("help_title"), tr("help_body"))
+
+    help_menu = tk.Menu(menubar, tearoff=0)
+    help_menu.add_command(label=tr("menu_about_item"), command=show_about)
+    help_menu.add_command(label=tr("menu_help_item"), command=show_help)
+    menubar.add_cascade(label=tr("menu_help"), menu=help_menu)
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True, padx=8, pady=8)
 
     # Estado compartido de los campos opcionales (desactivados por defecto).
     # Lo usan tanto la pestaña Principal como la de Lote.
-    extra_field_vars = {kw: tk.BooleanVar(value=False) for kw, _, _ in OPTIONAL_ANON_FIELDS}
+    extra_field_vars = {kw: tk.BooleanVar(value=False) for kw, _ in OPTIONAL_ANON_FIELDS}
 
     def get_selected_extra_keywords():
         return frozenset(kw for kw, var in extra_field_vars.items() if var.get())
 
     # ── Pestaña 1: Principal ──────────────────────────────────────────
     tab_main = ttk.Frame(notebook, padding=10)
-    notebook.add(tab_main, text="  Principal  ")
+    notebook.add(tab_main, text=tr("tab_main"))
 
-    ttk.Label(tab_main, text="Entrada (carpeta o comprimido):").grid(row=0, column=0, sticky="w", pady=4)
+    ttk.Label(tab_main, text=tr("input_label")).grid(row=0, column=0, sticky="w", pady=4)
     input_entry = ttk.Entry(tab_main, width=52)
     input_entry.grid(row=0, column=1, padx=4)
     in_btn_frame = ttk.Frame(tab_main)
     in_btn_frame.grid(row=0, column=2)
-    ttk.Button(in_btn_frame, text="Examinar",
-               command=lambda: browse_or_create_directory(input_entry, "Seleccionar entrada")).pack(side="left")
+    ttk.Button(in_btn_frame, text=tr("btn_browse"),
+               command=lambda: browse_or_create_directory(input_entry, tr("dlg_select_input"))).pack(side="left")
 
     def pick_archive():
         f = filedialog.askopenfilename(
-            title="Seleccionar archivo comprimido",
-            filetypes=[("Comprimidos", "*.zip *.7z *.tar *.gz *.tgz *.bz2 *.tbz2 *.xz *.txz"),
-                       ("Todos", "*.*")])
+            title=tr("dlg_select_archive"),
+            filetypes=[(tr("filetype_archives"), "*.zip *.7z *.tar *.gz *.tgz *.bz2 *.tbz2 *.xz *.txz"),
+                       (tr("filetype_all"), "*.*")])
         if f:
             input_entry.delete(0, tk.END)
             input_entry.insert(0, f)
 
-    ttk.Button(in_btn_frame, text="Archivo…", command=pick_archive).pack(side="left", padx=(4, 0))
+    ttk.Button(in_btn_frame, text=tr("btn_archive"), command=pick_archive).pack(side="left", padx=(4, 0))
 
-    ttk.Label(tab_main, text="Directorio de salida:").grid(row=1, column=0, sticky="w", pady=4)
+    ttk.Label(tab_main, text=tr("output_label")).grid(row=1, column=0, sticky="w", pady=4)
     output_entry = ttk.Entry(tab_main, width=52)
     output_entry.grid(row=1, column=1, padx=4)
 
     out_btn_frame = ttk.Frame(tab_main)
     out_btn_frame.grid(row=1, column=2, padx=0)
-    ttk.Button(out_btn_frame, text="Examinar",
-               command=lambda: browse_or_create_directory(output_entry, "Seleccionar salida")).pack(side="left")
-    ttk.Button(out_btn_frame, text="Crear",
+    ttk.Button(out_btn_frame, text=tr("btn_browse"),
+               command=lambda: browse_or_create_directory(output_entry, tr("dlg_select_output"))).pack(side="left")
+    ttk.Button(out_btn_frame, text=tr("btn_create"),
                command=lambda: create_directory_from_entry(output_entry)).pack(side="left", padx=(4, 0))
 
     ttk.Separator(tab_main, orient="horizontal").grid(row=2, column=0, columnspan=3, sticky="ew", pady=8)
 
     # Código de anonimización (nuevo Nombre e ID)
-    ttk.Label(tab_main, text="Código de anonimización:").grid(row=3, column=0, sticky="w", pady=4)
+    ttk.Label(tab_main, text=tr("code_label")).grid(row=3, column=0, sticky="w", pady=4)
     code_entry = ttk.Entry(tab_main, width=30)
     code_entry.grid(row=3, column=1, sticky="w", padx=4)
     ttk.Label(
         tab_main,
-        text="Este valor reemplaza Nombre e ID del paciente.\n"
-             "Si lo dejas vacío se usa \"Anonymized\". El resto (UIDs, geometría,\n"
-             "tags temporales) se preserva intacto.",
+        text=tr("code_hint"),
         foreground="#0a7", justify="left"
     ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(0, 6))
 
     # Procesos paralelos
-    ttk.Label(tab_main, text="Procesos paralelos:").grid(row=5, column=0, sticky="w")
+    ttk.Label(tab_main, text=tr("workers_label")).grid(row=5, column=0, sticky="w")
     default_workers = min(16, max(1, (os.cpu_count() or 4)))
     workers_var = tk.IntVar(value=default_workers)
     workers_scale = ttk.Scale(tab_main, from_=1, to=32, orient="horizontal",
@@ -745,7 +1182,7 @@ def main():
     sorter_var = tk.BooleanVar(value=False)
     ttk.Checkbutton(
         tab_main,
-        text="Ejecutar dicomsorter después de anonimizar  (⚠ puede fragmentar series 4D)",
+        text=tr("sorter_check"),
         variable=sorter_var
     ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(6, 2))
 
@@ -754,44 +1191,43 @@ def main():
     progress_bar = ttk.Progressbar(tab_main, orient="horizontal", length=460, mode="determinate")
     progress_bar.grid(row=8, column=0, columnspan=3, pady=(0, 4))
 
-    progress_label = ttk.Label(tab_main, text="0 / ? archivos (0%)")
+    progress_label = ttk.Label(tab_main, text=tr("progress_default"))
     progress_label.grid(row=9, column=0, columnspan=3)
 
-    status_label = ttk.Label(tab_main, text="Esperando acción…", foreground="gray")
+    status_label = ttk.Label(tab_main, text=tr("status_waiting"), foreground="gray")
     status_label.grid(row=10, column=0, columnspan=3, pady=(4, 0))
 
     btn_frame = ttk.Frame(tab_main)
     btn_frame.grid(row=11, column=0, columnspan=3, pady=10)
 
-    process_button = ttk.Button(btn_frame, text="▶  Procesar", width=18)
-    cancel_button = ttk.Button(btn_frame, text="✖  Cancelar", width=14, state="disabled",
+    process_button = ttk.Button(btn_frame, text=tr("btn_process"), width=18)
+    cancel_button = ttk.Button(btn_frame, text=tr("btn_cancel"), width=14, state="disabled",
                                command=lambda: cancel_event.set())
     process_button.pack(side="left", padx=6)
     cancel_button.pack(side="left", padx=6)
 
     # ── Pestaña 2: Lote (varios sujetos en serie) ────────────────────
     tab_batch = ttk.Frame(notebook, padding=10)
-    notebook.add(tab_batch, text="  Lote  ")
+    notebook.add(tab_batch, text=tr("tab_batch"))
 
     ttk.Label(tab_batch,
-              text="Procesa varios sujetos en serie. Cada uno se anonimiza con su código\n"
-                   "y se guarda en:  <salida raíz>/<código>",
+              text=tr("batch_intro"),
               justify="left").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
 
     # Salida raíz
-    ttk.Label(tab_batch, text="Salida raíz:").grid(row=1, column=0, sticky="w")
+    ttk.Label(tab_batch, text=tr("batch_output_label")).grid(row=1, column=0, sticky="w")
     batch_out_entry = ttk.Entry(tab_batch, width=48)
     batch_out_entry.grid(row=1, column=1, columnspan=2, sticky="w", padx=4)
-    ttk.Button(tab_batch, text="Examinar",
-               command=lambda: browse_or_create_directory(batch_out_entry, "Salida raíz del lote")
+    ttk.Button(tab_batch, text=tr("btn_browse"),
+               command=lambda: browse_or_create_directory(batch_out_entry, tr("dlg_batch_output"))
                ).grid(row=1, column=3, sticky="w")
 
     # Tabla de sujetos
     columns = ("carpeta", "codigo", "estado")
     tree = ttk.Treeview(tab_batch, columns=columns, show="headings", height=10)
-    tree.heading("carpeta", text="Carpeta de entrada")
-    tree.heading("codigo", text="Código (Nombre/ID)")
-    tree.heading("estado", text="Estado")
+    tree.heading("carpeta", text=tr("col_folder"))
+    tree.heading("codigo", text=tr("col_code"))
+    tree.heading("estado", text=tr("col_status"))
     tree.column("carpeta", width=300)
     tree.column("codigo", width=140)
     tree.column("estado", width=180)
@@ -812,38 +1248,38 @@ def main():
             s["code"] = tree.set(s["iid"], "codigo")
 
     def add_subject_folder():
-        d = filedialog.askdirectory(title="Seleccionar carpeta del sujeto")
+        d = filedialog.askdirectory(title=tr("dlg_subject_folder"))
         if not d:
             return
         code = os.path.basename(d.rstrip("/\\")) or f"sujeto{len(subjects)+1}"
-        iid = tree.insert("", tk.END, values=(d, code, "pendiente"))
+        iid = tree.insert("", tk.END, values=(d, code, tr("status_pending")))
         subjects.append({"input": d, "code": code, "iid": iid})
 
     def add_subfolders():
-        parent = filedialog.askdirectory(title="Carpeta padre (cada subcarpeta = 1 sujeto)")
+        parent = filedialog.askdirectory(title=tr("dlg_subfolders"))
         if not parent:
             return
         added = 0
         for name in sorted(os.listdir(parent)):
             full = os.path.join(parent, name)
             if os.path.isdir(full):
-                iid = tree.insert("", tk.END, values=(full, name, "pendiente"))
+                iid = tree.insert("", tk.END, values=(full, name, tr("status_pending")))
                 subjects.append({"input": full, "code": name, "iid": iid})
                 added += 1
         logging.info("Añadidos %d sujetos desde %s", added, parent)
 
     def add_archives():
         files = filedialog.askopenfilenames(
-            title="Seleccionar archivos comprimidos (Ctrl/Shift para varios)",
-            filetypes=[("Comprimidos", "*.zip *.7z *.tar *.gz *.tgz *.bz2 *.tbz2 *.xz *.txz"),
-                       ("Todos", "*.*")])
+            title=tr("dlg_archives"),
+            filetypes=[(tr("filetype_archives"), "*.zip *.7z *.tar *.gz *.tgz *.bz2 *.tbz2 *.xz *.txz"),
+                       (tr("filetype_all"), "*.*")])
         added = 0
         for f in files:
             if not is_archive(f):
                 logging.warning("Omitido (no es comprimido soportado): %s", f)
                 continue
             code = archive_basename(f)
-            iid = tree.insert("", tk.END, values=(f, code, "pendiente (zip)"))
+            iid = tree.insert("", tk.END, values=(f, code, tr("status_pending_zip")))
             subjects.append({"input": f, "code": code, "iid": iid})
             added += 1
         if added:
@@ -851,7 +1287,7 @@ def main():
 
     def add_archives_from_folder():
         parent = filedialog.askdirectory(
-            title="Carpeta con comprimidos (cada archivo = 1 sujeto)")
+            title=tr("dlg_archives_folder"))
         if not parent:
             return
         added = 0
@@ -859,13 +1295,13 @@ def main():
             full = os.path.join(parent, name)
             if is_archive(full):
                 code = archive_basename(full)
-                iid = tree.insert("", tk.END, values=(full, code, "pendiente (zip)"))
+                iid = tree.insert("", tk.END, values=(full, code, tr("status_pending_zip")))
                 subjects.append({"input": full, "code": code, "iid": iid})
                 added += 1
         logging.info("Añadidos %d comprimidos desde %s", added, parent)
         if added == 0:
-            messagebox.showinfo("Sin comprimidos",
-                                f"No se encontraron archivos comprimidos en:\n{parent}")
+            messagebox.showinfo(tr("msg_no_archives_title"),
+                                tr("msg_no_archives_body", parent=parent))
 
     def remove_selected():
         for iid in tree.selection():
@@ -907,42 +1343,42 @@ def main():
 
     batch_btns = ttk.Frame(tab_batch)
     batch_btns.grid(row=3, column=0, columnspan=4, sticky="w", pady=(0, 6))
-    ttk.Button(batch_btns, text="+ Sujeto", command=add_subject_folder).pack(side="left", padx=(0, 6))
-    ttk.Button(batch_btns, text="+ Subcarpetas", command=add_subfolders).pack(side="left", padx=(0, 6))
-    ttk.Button(batch_btns, text="+ Comprimido(s)", command=add_archives).pack(side="left", padx=(0, 6))
-    ttk.Button(batch_btns, text="+ Carpeta de zips", command=add_archives_from_folder).pack(side="left", padx=(0, 6))
-    ttk.Button(batch_btns, text="Quitar", command=remove_selected).pack(side="left", padx=(0, 6))
-    ttk.Button(batch_btns, text="Limpiar", command=clear_all).pack(side="left")
+    ttk.Button(batch_btns, text=tr("btn_add_subject"), command=add_subject_folder).pack(side="left", padx=(0, 6))
+    ttk.Button(batch_btns, text=tr("btn_add_subfolders"), command=add_subfolders).pack(side="left", padx=(0, 6))
+    ttk.Button(batch_btns, text=tr("btn_add_archives"), command=add_archives).pack(side="left", padx=(0, 6))
+    ttk.Button(batch_btns, text=tr("btn_add_archives_folder"), command=add_archives_from_folder).pack(side="left", padx=(0, 6))
+    ttk.Button(batch_btns, text=tr("btn_remove"), command=remove_selected).pack(side="left", padx=(0, 6))
+    ttk.Button(batch_btns, text=tr("btn_clear"), command=clear_all).pack(side="left")
 
-    ttk.Label(tab_batch, text="(doble clic en la columna Código para editarlo)",
+    ttk.Label(tab_batch, text=tr("edit_hint"),
               foreground="gray").grid(row=4, column=0, columnspan=4, sticky="w")
 
     # dicomsorter propio del lote (activado por defecto)
     batch_sorter_var = tk.BooleanVar(value=True)
     ttk.Checkbutton(
         tab_batch,
-        text="Ejecutar dicomsorter en cada sujeto  (⚠ puede fragmentar series 4D)",
+        text=tr("batch_sorter_check"),
         variable=batch_sorter_var
     ).grid(row=5, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
     # Progreso del lote
-    batch_subj_label = ttk.Label(tab_batch, text="Sujeto 0 / 0")
+    batch_subj_label = ttk.Label(tab_batch, text=tr("subj_label_default"))
     batch_subj_label.grid(row=6, column=0, columnspan=4, sticky="w", pady=(8, 0))
     batch_subj_bar = ttk.Progressbar(tab_batch, orient="horizontal", length=520, mode="determinate")
     batch_subj_bar.grid(row=7, column=0, columnspan=4, sticky="w", pady=(0, 4))
 
-    batch_file_label = ttk.Label(tab_batch, text="0 / ? archivos (0%)")
+    batch_file_label = ttk.Label(tab_batch, text=tr("progress_default"))
     batch_file_label.grid(row=8, column=0, columnspan=4, sticky="w")
     batch_file_bar = ttk.Progressbar(tab_batch, orient="horizontal", length=520, mode="determinate")
     batch_file_bar.grid(row=9, column=0, columnspan=4, sticky="w", pady=(0, 4))
 
-    batch_status = ttk.Label(tab_batch, text="Esperando acción…", foreground="gray")
+    batch_status = ttk.Label(tab_batch, text=tr("status_waiting"), foreground="gray")
     batch_status.grid(row=10, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
     batch_action = ttk.Frame(tab_batch)
     batch_action.grid(row=11, column=0, columnspan=4, pady=10, sticky="w")
-    batch_run_btn = ttk.Button(batch_action, text="▶  Procesar lote", width=18)
-    batch_cancel_btn = ttk.Button(batch_action, text="✖  Cancelar", width=14, state="disabled",
+    batch_run_btn = ttk.Button(batch_action, text=tr("btn_batch_process"), width=18)
+    batch_cancel_btn = ttk.Button(batch_action, text=tr("btn_cancel"), width=14, state="disabled",
                                   command=lambda: cancel_event.set())
     batch_run_btn.pack(side="left", padx=6)
     batch_cancel_btn.pack(side="left", padx=6)
@@ -961,23 +1397,20 @@ def main():
 
     # ── Pestaña 3: Campos opcionales (NIH / HIPAA Safe Harbor) ────────
     tab_extra = ttk.Frame(notebook, padding=10)
-    notebook.add(tab_extra, text="  Campos opcionales  ")
+    notebook.add(tab_extra, text=tr("tab_extra"))
 
     ttk.Label(
         tab_extra,
-        text="Campos adicionales a vaciar durante la anonimización. Todos están\n"
-             "DESACTIVADOS por defecto — selecciona solo los que exija tu estudio\n"
-             "(p. ej. requisitos de un repositorio financiado por NIH). No afectan\n"
-             "UIDs, geometría ni tags temporales; nunca se tocan esos.",
+        text=tr("extra_intro"),
         justify="left", foreground="#555"
     ).pack(anchor="w", pady=(0, 8))
 
     extra_btns = ttk.Frame(tab_extra)
     extra_btns.pack(anchor="w", pady=(0, 8))
-    ttk.Button(extra_btns, text="Marcar todos",
+    ttk.Button(extra_btns, text=tr("btn_check_all"),
                command=lambda: [v.set(True) for v in extra_field_vars.values()]
                ).pack(side="left", padx=(0, 6))
-    ttk.Button(extra_btns, text="Desmarcar todos",
+    ttk.Button(extra_btns, text=tr("btn_uncheck_all"),
                command=lambda: [v.set(False) for v in extra_field_vars.values()]
                ).pack(side="left")
 
@@ -1002,19 +1435,21 @@ def main():
     extra_canvas.bind_all("<MouseWheel>", _on_extra_scroll)
 
     current_category = None
-    for keyword, label, category in OPTIONAL_ANON_FIELDS:
-        if category != current_category:
-            current_category = category
-            ttk.Label(extra_inner, text=category, font=("", 9, "bold")
+    for keyword, category_slug in OPTIONAL_ANON_FIELDS:
+        if category_slug != current_category:
+            current_category = category_slug
+            category_label = CATEGORY_LABELS[APP_LANGUAGE][category_slug]
+            ttk.Label(extra_inner, text=category_label, font=("", 9, "bold")
                       ).pack(anchor="w", pady=(10, 2))
+        field_label = FIELD_LABELS[APP_LANGUAGE][keyword]
         ttk.Checkbutton(
-            extra_inner, text=f"{label}  ({keyword})",
+            extra_inner, text=f"{field_label}  ({keyword})",
             variable=extra_field_vars[keyword]
         ).pack(anchor="w", padx=(12, 0))
 
     # ── Pestaña 4: Log en tiempo real ────────────────────────────────
     tab_log = ttk.Frame(notebook, padding=6)
-    notebook.add(tab_log, text="  Log  ")
+    notebook.add(tab_log, text=tr("tab_log"))
 
     log_text = tk.Text(tab_log, state="disabled", wrap="word", height=22,
                        font=("Courier", 9), background="#1e1e1e", foreground="#d4d4d4",
@@ -1045,8 +1480,8 @@ def main():
 
     log_btns = ttk.Frame(tab_log)
     log_btns.pack(anchor="e", pady=(4, 0))
-    ttk.Button(log_btns, text="Diagnóstico", command=diagnostico).pack(side="left", padx=(0, 6))
-    ttk.Button(log_btns, text="Limpiar log", command=clear_log).pack(side="left")
+    ttk.Button(log_btns, text=tr("btn_diagnostic"), command=diagnostico).pack(side="left", padx=(0, 6))
+    ttk.Button(log_btns, text=tr("btn_clear_log"), command=clear_log).pack(side="left")
 
     # Conectar botón Procesar
     process_button.config(

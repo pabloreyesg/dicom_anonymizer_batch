@@ -5,6 +5,14 @@ segura** de imágenes DICOM. Protege específicamente la integridad de series 4D
 complejas (fMRI, DWI) preservando intactos UIDs, geometría y tags temporales,
 para evitar que los visores médicos (Weasis, etc.) fragmenten las series.
 
+## 🌐 Idioma
+
+La interfaz está disponible en **español** e **inglés**, seleccionable desde el
+menú **Idioma** en la barra superior. El cambio requiere reiniciar la app (se
+pide confirmación); la preferencia se guarda en `~/.dicom_anonymizer_lang.json`
+y se recuerda en el siguiente arranque. El menú **Ayuda** incluye **Acerca de**
+y **Ayuda** con instrucciones de uso.
+
 ## 🚀 Características
 
 * **Anonimización defensiva mínima:** por defecto solo sobreescribe `PatientName`
