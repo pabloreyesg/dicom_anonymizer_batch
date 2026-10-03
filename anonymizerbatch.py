@@ -86,6 +86,51 @@ PROTECTED_KEYWORDS = frozenset({
     "TriggerTime", "AcquisitionTime", "ContentTime",
 })
 
+# ═════════════════════════════════════════════
+#  CAMPOS OPCIONALES DE ANONIMIZACIÓN (desactivados por defecto)
+# ═════════════════════════════════════════════
+# Basados en el perfil básico de confidencialidad de DICOM (PS3.15 Anexo E)
+# y los identificadores HIPAA Safe Harbor — el conjunto que suelen exigir
+# los repositorios financiados por NIH (NDA, FITBIR, OpenNeuro, etc.).
+# Ninguno toca geometría/UIDs/tags temporales (ver PROTECTED_KEYWORDS).
+# Se vacían (valor "") en vez de usar el código de anonimización, siguiendo
+# la práctica estándar de DICOM para atributos "Replace -> zero-length".
+#
+# Cada entrada: (keyword DICOM, etiqueta visible, categoría para agrupar en la GUI)
+OPTIONAL_ANON_FIELDS = [
+    ("PatientBirthDate", "Fecha de nacimiento", "Identificación del paciente"),
+    ("PatientAge", "Edad del paciente", "Identificación del paciente"),
+    ("PatientAddress", "Dirección del paciente", "Identificación del paciente"),
+    ("PatientTelephoneNumbers", "Teléfono del paciente", "Identificación del paciente"),
+    ("OtherPatientIDs", "Otros IDs del paciente", "Identificación del paciente"),
+    ("OtherPatientNames", "Otros nombres del paciente", "Identificación del paciente"),
+    ("PatientBirthName", "Apellido de nacimiento", "Identificación del paciente"),
+    ("PatientMotherBirthName", "Apellido de soltera de la madre", "Identificación del paciente"),
+    ("EthnicGroup", "Grupo étnico", "Identificación del paciente"),
+    ("Occupation", "Ocupación", "Identificación del paciente"),
+    ("AdditionalPatientHistory", "Historia clínica adicional", "Identificación del paciente"),
+    ("PatientComments", "Comentarios del paciente", "Identificación del paciente"),
+    ("InstitutionName", "Nombre de la institución", "Institución y personal médico"),
+    ("InstitutionAddress", "Dirección de la institución", "Institución y personal médico"),
+    ("InstitutionalDepartmentName", "Departamento institucional", "Institución y personal médico"),
+    ("ReferringPhysicianName", "Médico que remite", "Institución y personal médico"),
+    ("ReferringPhysicianAddress", "Dirección del médico que remite", "Institución y personal médico"),
+    ("ReferringPhysicianTelephoneNumbers", "Teléfono del médico que remite", "Institución y personal médico"),
+    ("PerformingPhysicianName", "Médico que realiza el estudio", "Institución y personal médico"),
+    ("OperatorsName", "Nombre del operador/técnico", "Institución y personal médico"),
+    ("PhysiciansOfRecord", "Médicos responsables", "Institución y personal médico"),
+    ("NameOfPhysiciansReadingStudy", "Médico que interpreta el estudio", "Institución y personal médico"),
+    ("RequestingPhysician", "Médico solicitante", "Institución y personal médico"),
+    ("StationName", "Nombre de la estación/equipo", "Equipo y estudio"),
+    ("DeviceSerialNumber", "Número de serie del equipo", "Equipo y estudio"),
+    ("StudyID", "ID del estudio", "Equipo y estudio"),
+    ("AccessionNumber", "Número de accesión", "Equipo y estudio"),
+    ("StudyDate", "Fecha del estudio", "Fechas (identificador HIPAA)"),
+    ("SeriesDate", "Fecha de la serie", "Fechas (identificador HIPAA)"),
+    ("AcquisitionDate", "Fecha de adquisición", "Fechas (identificador HIPAA)"),
+    ("ContentDate", "Fecha de contenido", "Fechas (identificador HIPAA)"),
+]
+
 
 # ═════════════════════════════════════════════
 #  LÓGICA DE PROCESAMIENTO
@@ -109,11 +154,12 @@ def _save_dataset(ds, out_path):
 def _anon_worker(args):
     """
     Worker de PROCESO (picklable, sin objetos de GUI).
-    Anonimiza un archivo: PatientName + PatientID = anon_code.
+    Anonimiza un archivo: PatientName + PatientID = anon_code, más los
+    campos opcionales seleccionados (extra_keywords), que se vacían ("").
     Devuelve ('ok'|'skipped'|'error', mensaje_o_None).
     Preserva UIDs, geometría y tags temporales.
     """
-    file_path, input_dir, output_dir, anon_code = args
+    file_path, input_dir, output_dir, anon_code, extra_keywords = args
     try:
         ds = pydicom.dcmread(file_path)  # force=False: si no es DICOM, excepción -> skipped
     except Exception as e:
@@ -124,6 +170,12 @@ def _anon_worker(args):
             continue
         if keyword in ds:
             setattr(ds, keyword, anon_code)
+
+    for keyword in extra_keywords:
+        if keyword in PROTECTED_KEYWORDS:
+            continue
+        if keyword in ds:
+            setattr(ds, keyword, "")
 
     relative_path = os.path.relpath(file_path, input_dir)
     output_file_path = os.path.join(output_dir, relative_path)
@@ -136,12 +188,14 @@ def _anon_worker(args):
         return ("error", f"{file_path}: {e}")
 
 
-def anonymize_dicom_files(input_dir, output_dir, max_workers, anon_code, progress_callback):
+def anonymize_dicom_files(input_dir, output_dir, max_workers, anon_code, progress_callback,
+                          extra_keywords=frozenset()):
     """
     Recorre input_dir recursivamente y anonimiza EN PARALELO usando procesos
     (ProcessPoolExecutor), que aprovecha todos los núcleos (a diferencia de los
     hilos, limitados por el GIL para el parseo de pydicom).
     El proceso padre agrega contadores y reporta progreso a medida que terminan.
+    `extra_keywords`: campos opcionales adicionales a vaciar (ver OPTIONAL_ANON_FIELDS).
     """
     logging.info("Iniciando anonimización (procesos) en: %s", input_dir)
     file_paths = [
@@ -156,7 +210,7 @@ def anonymize_dicom_files(input_dir, output_dir, max_workers, anon_code, progres
     if total == 0:
         return counters, total
 
-    tasks = [(fp, input_dir, output_dir, anon_code) for fp in file_paths]
+    tasks = [(fp, input_dir, output_dir, anon_code, extra_keywords) for fp in file_paths]
     # chunksize amortiza el coste de IPC cuando hay muchísimos archivos pequeños.
     chunksize = max(1, min(64, total // (max_workers * 4) or 1))
 
@@ -313,11 +367,12 @@ def run_dicomsorter(input_dir, output_dir, n_files):
 
 
 def anonymize_subject(source, output_dir, max_workers, anon_code, run_sorter,
-                      progress_callback, status_callback=None):
+                      progress_callback, status_callback=None, extra_keywords=frozenset()):
     """
     Núcleo reutilizable: anonimiza UN sujeto hacia output_dir.
     `source` puede ser una CARPETA o un ARCHIVO COMPRIMIDO (zip/tar.*).
     Si es comprimido, se descomprime a un temporal que se limpia al terminar.
+    `extra_keywords`: campos opcionales adicionales a vaciar (ver OPTIONAL_ANON_FIELDS).
     Devuelve (counters, total). Lanza excepción si algo falla.
     """
     with contextlib.ExitStack() as stack:
@@ -343,7 +398,8 @@ def anonymize_subject(source, output_dir, max_workers, anon_code, run_sorter,
                 tempfile.TemporaryDirectory(prefix="dicom_anon_"))
             logging.debug("Directorio temporal: %s", temp_dir)
             counters, total = anonymize_dicom_files(
-                input_dir, temp_dir, max_workers, anon_code, progress_callback
+                input_dir, temp_dir, max_workers, anon_code, progress_callback,
+                extra_keywords=extra_keywords
             )
             if cancel_event.is_set():
                 return counters, total
@@ -354,14 +410,16 @@ def anonymize_subject(source, output_dir, max_workers, anon_code, run_sorter,
             # Escritura DIRECTA al destino: la mitad de I/O (sin copytree posterior).
             os.makedirs(output_dir, exist_ok=True)
             counters, total = anonymize_dicom_files(
-                input_dir, output_dir, max_workers, anon_code, progress_callback
+                input_dir, output_dir, max_workers, anon_code, progress_callback,
+                extra_keywords=extra_keywords
             )
 
     return counters, total
 
 
 def process_images(input_dir, output_dir, max_workers, anon_code, run_sorter,
-                   status_label, progress_bar, progress_label, cancel_button):
+                   status_label, progress_bar, progress_label, cancel_button,
+                   extra_keywords=frozenset()):
     """Orquesta la anonimización de UN sujeto (modo pestaña Principal)."""
     cancel_event.clear()
 
@@ -375,7 +433,8 @@ def process_images(input_dir, output_dir, max_workers, anon_code, run_sorter,
     try:
         counters, _ = anonymize_subject(
             input_dir, output_dir, max_workers, anon_code, run_sorter,
-            update_progress, status_callback=lambda t: safe_update(status_label, t)
+            update_progress, status_callback=lambda t: safe_update(status_label, t),
+            extra_keywords=extra_keywords
         )
 
         if cancel_event.is_set():
@@ -403,7 +462,8 @@ def sanitize_code(code):
 
 def process_batch(subjects, output_root, max_workers, run_sorter,
                   status_label, subj_progress_bar, subj_progress_label,
-                  file_progress_bar, file_progress_label, tree, cancel_button):
+                  file_progress_bar, file_progress_label, tree, cancel_button,
+                  extra_keywords=frozenset()):
     """
     Procesa una lista de sujetos EN SERIE.
     subjects: lista de dicts {'input': ruta, 'code': str, 'iid': id_en_treeview}
@@ -441,7 +501,8 @@ def process_batch(subjects, output_root, max_workers, run_sorter,
 
         try:
             counters, _ = anonymize_subject(
-                input_dir, out_dir, max_workers, code, run_sorter, update_file_progress
+                input_dir, out_dir, max_workers, code, run_sorter, update_file_progress,
+                extra_keywords=extra_keywords
             )
             for k in aggregate:
                 aggregate[k] += counters[k]
@@ -516,7 +577,7 @@ def poll_log_queue(log_text, root):
 
 def start_processing(input_entry, output_entry, code_entry, workers_var, sorter_var,
                      status_label, progress_bar, progress_label,
-                     process_button, cancel_button):
+                     process_button, cancel_button, get_extra_keywords):
     input_dir = input_entry.get().strip()
     output_dir = output_entry.get().strip()
     anon_code = code_entry.get().strip() or DEFAULT_ANON_CODE
@@ -541,6 +602,7 @@ def start_processing(input_entry, output_entry, code_entry, workers_var, sorter_
 
     max_workers = workers_var.get()
     run_sorter = sorter_var.get()
+    extra_keywords = get_extra_keywords()
 
     progress_bar.config(value=0)
     progress_label.config(text="0 / ? archivos (0%)")
@@ -549,7 +611,8 @@ def start_processing(input_entry, output_entry, code_entry, workers_var, sorter_
         try:
             process_images(
                 input_dir, output_dir, max_workers, anon_code, run_sorter,
-                status_label, progress_bar, progress_label, cancel_button
+                status_label, progress_bar, progress_label, cancel_button,
+                extra_keywords=extra_keywords
             )
         finally:
             process_button.after(0, lambda: process_button.config(state="normal"))
@@ -561,7 +624,7 @@ def start_processing(input_entry, output_entry, code_entry, workers_var, sorter_
 
 def start_batch(subjects, output_root, workers_var, sorter_var, tree,
                 status_label, subj_bar, subj_label, file_bar, file_label,
-                run_button, cancel_button):
+                run_button, cancel_button, get_extra_keywords):
     """Valida y lanza el procesamiento en serie de varios sujetos."""
     if not subjects:
         messagebox.showwarning("Sin sujetos", "Añade al menos un sujeto a la lista.")
@@ -584,6 +647,7 @@ def start_batch(subjects, output_root, workers_var, sorter_var, tree,
 
     max_workers = workers_var.get()
     run_sorter = sorter_var.get()
+    extra_keywords = get_extra_keywords()
 
     subj_bar.config(value=0)
     file_bar.config(value=0)
@@ -593,7 +657,7 @@ def start_batch(subjects, output_root, workers_var, sorter_var, tree,
             process_batch(
                 subjects, output_root, max_workers, run_sorter,
                 status_label, subj_bar, subj_label, file_bar, file_label,
-                tree, cancel_button
+                tree, cancel_button, extra_keywords=extra_keywords
             )
         finally:
             run_button.after(0, lambda: run_button.config(state="normal"))
@@ -610,6 +674,13 @@ def main():
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True, padx=8, pady=8)
+
+    # Estado compartido de los campos opcionales (desactivados por defecto).
+    # Lo usan tanto la pestaña Principal como la de Lote.
+    extra_field_vars = {kw: tk.BooleanVar(value=False) for kw, _, _ in OPTIONAL_ANON_FIELDS}
+
+    def get_selected_extra_keywords():
+        return frozenset(kw for kw, var in extra_field_vars.items() if var.get())
 
     # ── Pestaña 1: Principal ──────────────────────────────────────────
     tab_main = ttk.Frame(notebook, padding=10)
@@ -882,12 +953,66 @@ def main():
             start_batch(
                 subjects, batch_out_entry.get().strip(), workers_var, batch_sorter_var, tree,
                 batch_status, batch_subj_bar, batch_subj_label,
-                batch_file_bar, batch_file_label, batch_run_btn, batch_cancel_btn
+                batch_file_bar, batch_file_label, batch_run_btn, batch_cancel_btn,
+                get_selected_extra_keywords
             )
         )
     )
 
-    # ── Pestaña 3: Log en tiempo real ────────────────────────────────
+    # ── Pestaña 3: Campos opcionales (NIH / HIPAA Safe Harbor) ────────
+    tab_extra = ttk.Frame(notebook, padding=10)
+    notebook.add(tab_extra, text="  Campos opcionales  ")
+
+    ttk.Label(
+        tab_extra,
+        text="Campos adicionales a vaciar durante la anonimización. Todos están\n"
+             "DESACTIVADOS por defecto — selecciona solo los que exija tu estudio\n"
+             "(p. ej. requisitos de un repositorio financiado por NIH). No afectan\n"
+             "UIDs, geometría ni tags temporales; nunca se tocan esos.",
+        justify="left", foreground="#555"
+    ).pack(anchor="w", pady=(0, 8))
+
+    extra_btns = ttk.Frame(tab_extra)
+    extra_btns.pack(anchor="w", pady=(0, 8))
+    ttk.Button(extra_btns, text="Marcar todos",
+               command=lambda: [v.set(True) for v in extra_field_vars.values()]
+               ).pack(side="left", padx=(0, 6))
+    ttk.Button(extra_btns, text="Desmarcar todos",
+               command=lambda: [v.set(False) for v in extra_field_vars.values()]
+               ).pack(side="left")
+
+    # Área con scroll (hay ~30 checkboxes agrupados por categoría)
+    extra_canvas = tk.Canvas(tab_extra, borderwidth=0, highlightthickness=0)
+    extra_scroll = ttk.Scrollbar(tab_extra, orient="vertical", command=extra_canvas.yview)
+    extra_inner = ttk.Frame(extra_canvas)
+
+    extra_inner.bind(
+        "<Configure>",
+        lambda e: extra_canvas.configure(scrollregion=extra_canvas.bbox("all"))
+    )
+    extra_canvas.create_window((0, 0), window=extra_inner, anchor="nw")
+    extra_canvas.configure(yscrollcommand=extra_scroll.set)
+
+    extra_canvas.pack(side="left", fill="both", expand=True)
+    extra_scroll.pack(side="right", fill="y")
+
+    def _on_extra_scroll(event):
+        extra_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    extra_canvas.bind_all("<MouseWheel>", _on_extra_scroll)
+
+    current_category = None
+    for keyword, label, category in OPTIONAL_ANON_FIELDS:
+        if category != current_category:
+            current_category = category
+            ttk.Label(extra_inner, text=category, font=("", 9, "bold")
+                      ).pack(anchor="w", pady=(10, 2))
+        ttk.Checkbutton(
+            extra_inner, text=f"{label}  ({keyword})",
+            variable=extra_field_vars[keyword]
+        ).pack(anchor="w", padx=(12, 0))
+
+    # ── Pestaña 4: Log en tiempo real ────────────────────────────────
     tab_log = ttk.Frame(notebook, padding=6)
     notebook.add(tab_log, text="  Log  ")
 
@@ -928,7 +1053,7 @@ def main():
         command=lambda: start_processing(
             input_entry, output_entry, code_entry, workers_var, sorter_var,
             status_label, progress_bar, progress_label,
-            process_button, cancel_button
+            process_button, cancel_button, get_selected_extra_keywords
         )
     )
 

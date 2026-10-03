@@ -7,7 +7,11 @@ para evitar que los visores médicos (Weasis, etc.) fragmenten las series.
 
 ## 🚀 Características
 
-* **Anonimización defensiva mínima:** solo sobreescribe `PatientName` y `PatientID`.
+* **Anonimización defensiva mínima:** por defecto solo sobreescribe `PatientName`
+  y `PatientID`. Opcionalmente puedes activar ~30 campos adicionales (fecha de
+  nacimiento, institución, médicos, fechas de estudio, etc.) desde la pestaña
+  **Campos opcionales** — útil para cumplir requisitos de repositorios
+  financiados por NIH (NDA, FITBIR, OpenNeuro). Todos desactivados por defecto.
 * **Protección de integridad 4D:** UIDs, geometría y tags de orden/temporales
   (SeriesInstanceUID, ImagePositionPatient, AcquisitionNumber, etc.) nunca se tocan.
 * **Procesamiento paralelo multinúcleo:** usa `ProcessPoolExecutor` para evitar
@@ -67,7 +71,16 @@ Se abre la interfaz gráfica con tres pestañas:
 1. **Principal** — anonimiza una carpeta o un comprimido hacia un directorio de salida.
 2. **Lote** — procesa varios sujetos en serie (cada uno con su propio código,
    guardado en `<salida raíz>/<código>`).
-3. **Log** — consola en tiempo real + botón de diagnóstico (verifica versiones
+3. **Campos opcionales** — checkboxes agrupados por categoría (identificación
+   del paciente, institución/personal médico, equipo/estudio, fechas) para
+   vaciar campos DICOM adicionales más allá de `PatientName`/`PatientID`.
+   Están **desactivados por defecto**; actívalos solo si tu estudio lo exige
+   (basado en el perfil básico de confidencialidad de DICOM PS3.15 Anexo E y
+   los identificadores HIPAA Safe Harbor). Nunca tocan UIDs, geometría ni tags
+   temporales — esos siguen protegidos por `PROTECTED_KEYWORDS` sin excepción,
+   incluso si aparecieran seleccionados. Aplica tanto al modo Principal como
+   al modo Lote.
+4. **Log** — consola en tiempo real + botón de diagnóstico (verifica versiones
    de `pydicom`/`py7zr` y el intérprete en uso).
 
 ### Soporte opcional de `dicomsorter`
